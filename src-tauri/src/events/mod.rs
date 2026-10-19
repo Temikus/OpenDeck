@@ -44,16 +44,16 @@ pub async fn register_plugin(event: RegisterEvent, stream: WebSocketStream<TcpSt
 	match event {
 		RegisterEvent::RegisterPlugin { uuid } => {
 			{
-				// Hold the sockets lock while replaying so that no message is queued after the replay but before the insert.
+				// Hold the sockets lock while draining the queue so that no message is queued after the drain but before the insert.
 				let mut sockets = PLUGIN_SOCKETS.lock().await;
 				if sockets.contains_key(&uuid) {
 					log::error!("Plugin {} is already registered; ignoring duplicate registration", uuid);
 					return;
 				}
 				log::debug!("Registered plugin {}", uuid);
-				if let Some(queue) = PLUGIN_QUEUES.read().await.get(&uuid) {
+				if let Some(queue) = PLUGIN_QUEUES.write().await.remove(&uuid) {
 					for message in queue {
-						let _ = sender.send(message.clone());
+						let _ = sender.send(message);
 					}
 				}
 				sockets.insert(uuid.clone(), sender);
@@ -70,9 +70,9 @@ pub async fn register_plugin(event: RegisterEvent, stream: WebSocketStream<TcpSt
 				if sockets.contains_key(&uuid) {
 					return;
 				}
-				if let Some(queue) = PROPERTY_INSPECTOR_QUEUES.read().await.get(&uuid) {
+				if let Some(queue) = PROPERTY_INSPECTOR_QUEUES.write().await.remove(&uuid) {
 					for message in queue {
-						let _ = sender.send(message.clone());
+						let _ = sender.send(message);
 					}
 				}
 				sockets.insert(uuid.clone(), sender);
