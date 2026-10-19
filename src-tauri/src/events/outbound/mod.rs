@@ -139,4 +139,35 @@ mod tests {
 		};
 		tokio::time::timeout(Duration::from_secs(10), send_all).await.expect("sending to a plugin that stopped reading blocked");
 	}
+
+	/// Read the next text message, or `None` if nothing arrives within the timeout.
+	async fn next_text(client: &mut WebSocketStream<TcpStream>) -> Option<String> {
+		use futures::StreamExt;
+		match tokio::time::timeout(Duration::from_millis(500), client.next()).await {
+			Ok(Some(Ok(message))) => message.into_text().ok().map(|text| text.to_string()),
+			_ => None,
+		}
+	}
+
+	#[tokio::test]
+	async fn queued_events_are_delivered_only_once() {
+		let first = serde_json::json!({ "event": "first" });
+		send_to_plugin("test.queue", &first).await.unwrap();
+		let mut client = connect_plugin("test.queue").await;
+		assert_eq!(next_text(&mut client).await, Some(first.to_string()));
+
+		drop(client);
+		let disconnected = async {
+			while crate::events::registered_plugins().await.iter().any(|uuid| uuid == "test.queue") {
+				tokio::time::sleep(Duration::from_millis(10)).await;
+			}
+		};
+		tokio::time::timeout(Duration::from_secs(5), disconnected).await.unwrap();
+
+		let second = serde_json::json!({ "event": "second" });
+		send_to_plugin("test.queue", &second).await.unwrap();
+		let mut client = connect_plugin("test.queue").await;
+		assert_eq!(next_text(&mut client).await, Some(second.to_string()));
+		assert_eq!(next_text(&mut client).await, None);
+	}
 }
